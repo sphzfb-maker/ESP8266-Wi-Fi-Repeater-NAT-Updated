@@ -1,0 +1,11 @@
+This firmware has just been customized for your build (MAC clone, client
+list, EN language, reconnect stability), so no prebuilt .bin is shipped
+here to avoid confusion with an out-of-date binary.
+
+Build it yourself in one step:
+    ./flash.sh /dev/ttyUSB0      (Linux/macOS)
+    flash.bat COM3               (Windows)
+
+These scripts now run `pio run` to compile, then flash the result
+straight from .pio/build/esp12e/firmware.bin — that's where the .bin
+will appear if you ever want to grab it directly instead of flashing.
