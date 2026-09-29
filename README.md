@@ -1,4 +1,4 @@
-# 🚀 ESP8266 Turbo Wi-Fi Repeater & NAT Router
+# 🚀 ESP8266 Turbo Wi-Fi Repeater & NAT Router — v1.2.1
 ### *High-Throughput (5 Mbps) & Ultra-Low Latency 160MHz Wi-Fi Range Extender with Modern Web UI*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -9,6 +9,23 @@
 A high-performance, standalone **Wi-Fi Repeater / WISP-mode NAT Router** firmware written in C++ for the **ESP8266** microcontroller (NodeMCU, Wemos D1 Mini, ESP-12E/F).
 
 It bridges and extends any 2.4 GHz Wi-Fi network without requiring external components, achieving the maximum hardware-theoretical throughput (~5 Mbps) with minimized ping latency and featuring a lightweight, mobile-first Web Management Portal.
+
+
+
+## 🆕 New in v1.1.0
+
+This update keeps the existing repeater features and adds:
+
+* **Hidden-network scan:** active scans now request hidden APs and show hidden entries with RSSI, channel and BSSID. A hidden SSID still has to be typed manually because the SSID itself is not broadcast.
+* **Live diagnostics panel:** WAN gateway, DNS servers, free RAM, free sketch space, flash size, CPU/core version, reset reason and active upstream slot.
+* **Manual WAN reconnect:** reconnect the upstream link from the phone without rebooting the whole device.
+* **Internet reachability test:** a lightweight TCP connection test to `1.1.1.1:80` with elapsed time. This is explicitly not an ICMP ping.
+* **Traffic-counter reset:** clear download/upload counters without restarting the ESP8266.
+* **Better scan presentation:** networks are sorted by RSSI and channel/security details are shown.
+* **4 MB flash layout:** PlatformIO is explicitly configured for a 4 MB flash target with a 1 MB filesystem region.
+* **Mobile UI tooling:** the new diagnostics/actions are designed for use directly from the repeater's web page.
+
+Existing features such as three upstream profiles, automatic failover, zero-sleep radio mode, channel synchronization, NAPT, MAC filtering, custom WAN/AP MACs, DHCP/DNS settings, connected-client management and factory reset are retained rather than duplicated.
 
 ---
 
@@ -53,7 +70,7 @@ Standard ESP8266 repeaters often suffer from low speeds (< 1 Mbps) and high ping
 
 ## 📦 Quick Installation
 
-This repo ships as source only (no precompiled `.bin`) so you always flash a build that matches the code. You'll need [PlatformIO Core](https://platformio.org/install/cli) installed once:
+This repo ships as source only (no precompiled `.bin` in the ZIP). The included PlatformIO configuration targets a 4 MB flash ESP8266 build. You'll need [PlatformIO Core](https://platformio.org/install/cli) installed once:
 ```bash
 pip install platformio
 ```
@@ -142,3 +159,8 @@ esp8266-wifi-repeater/
 ## 📜 License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. Free for personal, commercial, and educational use.
+
+
+## v1.2.0 additions
+- Per-upstream DHCP or Static IPv4 configuration (IP, gateway, subnet mask, DNS), including backup networks.
+- Connected clients show DHCP hostnames when the client supplies one; otherwise a MAC-based fallback label is shown.
