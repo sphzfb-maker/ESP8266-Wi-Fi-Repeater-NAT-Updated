@@ -7,7 +7,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP8266 Wi-Fi Turbo Repeater</title>
+    <title>ESP8266 Wi-Fi Turbo Repeater v1.2.1</title>
     <style>
         :root {
             --bg: #0b1120;
@@ -77,7 +77,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .client-info { display: flex; flex-direction: column; }
         .client-mac { font-weight: 600; }
         .client-ip { color: var(--text-dim); }
+        .client-name { font-weight: 700; margin-bottom: 2px; }
+        .client-name-source { color: var(--text-dim); font-size: 0.68rem; margin-left: 5px; }
+        .wan-ip-box { margin-top: 10px; padding: 10px; border: 1px dashed var(--border); border-radius: 8px; }
+        .wan-ip-box .sub-title { margin-top: 0; }
         .empty-hint { color: var(--text-dim); font-size: 0.8rem; text-align: center; padding: 10px 0; }
+        .diag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .diag-item { padding: 8px 10px; background: var(--card-sub); border: 1px solid var(--border); border-radius: 8px; }
+        .diag-label { display: block; color: var(--text-dim); font-size: 0.68rem; margin-bottom: 2px; }
+        .diag-val { font-family: monospace; font-size: 0.76rem; word-break: break-all; }
+        .tool-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+        .tool-btn { padding: 9px 6px; background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: 8px; font-size: 0.75rem; cursor: pointer; }
+        .tool-btn:hover { background: rgba(255,255,255,0.05); }
+        @media (max-width: 420px) { .tool-row { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -160,6 +172,27 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         </div>
     </div>
 
+    <!-- Diagnostics & Tools -->
+    <div class="card">
+        <div class="card-title"><span>Diagnostics &amp; Tools</span><span id="test-badge" class="badge badge-warning">Ready</span></div>
+        <div class="diag-grid">
+            <div class="diag-item"><span class="diag-label">WAN gateway</span><span id="diag-gateway" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">WAN DNS</span><span id="diag-dns" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">Free RAM</span><span id="diag-heap" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">Free sketch space</span><span id="diag-sketch" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">Flash</span><span id="diag-flash" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">CPU / core</span><span id="diag-core" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">Reset reason</span><span id="diag-reset" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">Upstream slot</span><span id="diag-upstream" class="diag-val">---</span></div>
+        </div>
+        <div class="tool-row">
+            <button type="button" class="tool-btn" onclick="reconnectNow()">Reconnect WAN</button>
+            <button type="button" class="tool-btn" onclick="runInternetTest()">Test Internet</button>
+            <button type="button" class="tool-btn" onclick="resetTraffic()">Reset Traffic</button>
+        </div>
+        <div id="diag-result" class="hint" style="margin-top:8px;text-align:center;"></div>
+    </div>
+
     <!-- Configuration Form -->
     <div class="card">
         <div class="card-title">
@@ -180,12 +213,31 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             <option value="">-- Scan to list networks --</option>
                         </select>
                         <input type="text" id="sta_ssid0" list="ssid-list" placeholder="Network name (SSID)" style="margin-top: 6px;">
+                        <div class="hint">Hidden Wi-Fi networks are shown by BSSID/channel during scanning. Type the hidden SSID manually to connect.</div>
                     </div>
                     <div class="form-group">
                         <label for="sta_pass0">Primary password</label>
                         <div class="input-wrapper">
                             <input type="password" id="sta_pass0" placeholder="Wi-Fi password" oninput="this.dataset.dirty='1'">
                             <button type="button" class="eye-btn" onclick="togglePass('sta_pass0')">👁️</button>
+                        </div>
+                    </div>
+                    <div class="wan-ip-box">
+                        <div class="sub-title">Primary network IP assignment</div>
+                        <div class="form-group">
+                            <label for="sta_mode0">WAN IP mode</label>
+                            <select id="sta_mode0" onchange="toggleWanStatic(0)"><option value="0">DHCP (automatic)</option><option value="1">Static IP (manual)</option></select>
+                        </div>
+                        <div id="sta_static_box0" style="display:none;">
+                            <div class="row2">
+                                <div class="form-group"><label for="sta_ip0">IP address</label><input type="text" id="sta_ip0" placeholder="192.168.1.50"></div>
+                                <div class="form-group"><label for="sta_gateway0">Gateway</label><input type="text" id="sta_gateway0" placeholder="192.168.1.1"></div>
+                            </div>
+                            <div class="row2">
+                                <div class="form-group"><label for="sta_subnet0">Subnet mask</label><input type="text" id="sta_subnet0" placeholder="255.255.255.0"></div>
+                                <div class="form-group"><label for="sta_dns0">DNS server</label><input type="text" id="sta_dns0" placeholder="8.8.8.8"></div>
+                            </div>
+                            <div class="hint">Use an unused address in the main router's subnet. Gateway is normally the main router address.</div>
                         </div>
                     </div>
 
@@ -206,6 +258,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             <button type="button" class="eye-btn" onclick="togglePass('sta_pass1')">👁️</button>
                         </div>
                     </div>
+                    <div class="wan-ip-box">
+                        <div class="sub-title">Backup 1 IP assignment</div>
+                        <div class="form-group">
+                            <label for="sta_mode1">WAN IP mode</label>
+                            <select id="sta_mode1" onchange="toggleWanStatic(1)"><option value="0">DHCP (automatic)</option><option value="1">Static IP (manual)</option></select>
+                        </div>
+                        <div id="sta_static_box1" style="display:none;">
+                            <div class="row2">
+                                <div class="form-group"><label for="sta_ip1">IP address</label><input type="text" id="sta_ip1" placeholder="192.168.1.50"></div>
+                                <div class="form-group"><label for="sta_gateway1">Gateway</label><input type="text" id="sta_gateway1" placeholder="192.168.1.1"></div>
+                            </div>
+                            <div class="row2">
+                                <div class="form-group"><label for="sta_subnet1">Subnet mask</label><input type="text" id="sta_subnet1" placeholder="255.255.255.0"></div>
+                                <div class="form-group"><label for="sta_dns1">DNS server</label><input type="text" id="sta_dns1" placeholder="8.8.8.8"></div>
+                            </div>
+                            <div class="hint">Use an unused address in the main router's subnet. Gateway is normally the main router address.</div>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <input type="text" id="sta_ssid2" list="ssid-list" placeholder="Backup 2 name (SSID)">
                         <div class="input-wrapper" style="margin-top: 6px;">
@@ -213,6 +283,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             <button type="button" class="eye-btn" onclick="togglePass('sta_pass2')">👁️</button>
                         </div>
                         <div class="hint">If the current network is unreachable for ~25 seconds, the repeater switches to the next configured one. Leave empty to disable.</div>
+                    </div>
+                    <div class="wan-ip-box">
+                        <div class="sub-title">Backup 2 IP assignment</div>
+                        <div class="form-group">
+                            <label for="sta_mode2">WAN IP mode</label>
+                            <select id="sta_mode2" onchange="toggleWanStatic(2)"><option value="0">DHCP (automatic)</option><option value="1">Static IP (manual)</option></select>
+                        </div>
+                        <div id="sta_static_box2" style="display:none;">
+                            <div class="row2">
+                                <div class="form-group"><label for="sta_ip2">IP address</label><input type="text" id="sta_ip2" placeholder="192.168.1.50"></div>
+                                <div class="form-group"><label for="sta_gateway2">Gateway</label><input type="text" id="sta_gateway2" placeholder="192.168.1.1"></div>
+                            </div>
+                            <div class="row2">
+                                <div class="form-group"><label for="sta_subnet2">Subnet mask</label><input type="text" id="sta_subnet2" placeholder="255.255.255.0"></div>
+                                <div class="form-group"><label for="sta_dns2">DNS server</label><input type="text" id="sta_dns2" placeholder="8.8.8.8"></div>
+                            </div>
+                            <div class="hint">Use an unused address in the main router's subnet. Gateway is normally the main router address.</div>
+                        </div>
                     </div>
                     <datalist id="ssid-list"></datalist>
                 </div>
@@ -375,7 +463,7 @@ function updateStatus() {
             let name = data.sta_ssid || 'Not configured';
             if (data.sta_connected && data.sta_slot > 0) name += ' (backup ' + data.sta_slot + ')';
             $('stat-sta-ssid').innerText = name;
-            $('stat-sta-ip').innerText = data.sta_ip || '0.0.0.0';
+            $('stat-sta-ip').innerText = (data.sta_ip || '0.0.0.0') + (data.wan_static ? ' (Static)' : ' (DHCP)');
             $('stat-rssi').innerText = data.sta_connected ? `${data.rssi} dBm (${data.signal_pct}%)` : 'Disconnected';
             $('stat-channel').innerText = data.channel || '---';
             $('stat-mac').innerText = data.sta_mac || '---';
@@ -405,6 +493,11 @@ function updateStatus() {
         .catch(e => console.error(e));
 }
 
+function esc(s) {
+    return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, ch =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
 function updateClients() {
     fetch('/clients')
         .then(r => r.json())
@@ -416,10 +509,79 @@ function updateClients() {
                 return;
             }
             container.innerHTML = list.map(c =>
-                `<div class="client-row"><div class="client-info"><span class="client-mac">${c.mac}</span><span class="client-ip">${c.ip}</span></div><button class="mini-btn" onclick="blockClient('${c.mac}')">Block</button></div>`
+                `<div class="client-row"><div class="client-info"><span class="client-name">${esc(c.name || 'Unknown device')}<span class="client-name-source">${c.name_source === 'DHCP' ? 'DHCP name' : 'MAC label'}</span></span><span class="client-mac">${esc(c.mac)}</span><span class="client-ip">${esc(c.ip)}</span></div><button class="mini-btn" onclick="blockClient('${esc(c.mac)}')">Block</button></div>`
             ).join('');
         })
         .catch(e => console.error(e));
+}
+
+function setDiag(id, value) {
+    const e = $(id);
+    if (e) e.innerText = value;
+}
+
+function loadDiagnostics() {
+    fetch('/diagnostics')
+        .then(r => r.json())
+        .then(d => {
+            setDiag('diag-gateway', d.gateway || '---');
+            setDiag('diag-dns', [d.dns1, d.dns2].filter(x => x && x !== '0.0.0.0').join(' / ') || '---');
+            setDiag('diag-heap', fmtSize(Math.round((d.free_heap || 0) / 1024)));
+            setDiag('diag-sketch', fmtSize(Math.round((d.free_sketch || 0) / 1024)));
+            setDiag('diag-flash', fmtSize(Math.round((d.flash_size || 0) / 1024)) + ' / real ' + fmtSize(Math.round((d.flash_real_size || 0) / 1024)));
+            setDiag('diag-core', (d.cpu_mhz || '?') + ' MHz / ' + (d.core_version || '?'));
+            setDiag('diag-reset', d.reset_reason || '---');
+            setDiag('diag-upstream', (d.active_upstream || '?') + ' / ' + (d.configured_upstreams || '?'));
+        })
+        .catch(() => {});
+}
+
+function reconnectNow() {
+    const out = $('diag-result');
+    out.innerText = 'Starting WAN reconnect...';
+    fetch('/reconnect', { method: 'POST' })
+        .then(r => r.text().then(t => ({ ok: r.ok, text: t })))
+        .then(res => {
+            out.innerText = res.text;
+            setTimeout(loadDiagnostics, 1200);
+        })
+        .catch(() => { out.innerText = 'Reconnect request failed'; });
+}
+
+function runInternetTest() {
+    const badge = $('test-badge');
+    const out = $('diag-result');
+    badge.innerText = 'Testing...';
+    badge.className = 'badge badge-warning';
+    out.innerText = 'Testing TCP connectivity to 1.1.1.1:80...';
+    fetch('/internet-test')
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                badge.innerText = d.latency_ms + ' ms';
+                badge.className = 'badge badge-success';
+                out.innerText = 'TCP connection succeeded. This is a reachability test, not an ICMP ping.';
+            } else {
+                badge.innerText = 'Failed';
+                badge.className = 'badge badge-warning';
+                out.innerText = 'TCP connection failed. Check WAN Wi-Fi, gateway and DNS/router access.';
+            }
+        })
+        .catch(() => {
+            badge.innerText = 'Error';
+            badge.className = 'badge badge-warning';
+            out.innerText = 'Test request failed.';
+        });
+}
+
+function resetTraffic() {
+    fetch('/traffic/reset', { method: 'POST' })
+        .then(r => r.text())
+        .then(t => {
+            $('diag-result').innerText = t;
+            updateStatus();
+        })
+        .catch(() => { $('diag-result').innerText = 'Traffic reset failed'; });
 }
 
 function blockClient(mac) {
@@ -446,21 +608,32 @@ function scanNetworks() {
             const dl = $('ssid-list');
             select.innerHTML = '<option value="">-- Select a detected network --</option>';
             dl.innerHTML = '';
+
+            networks.sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
             networks.forEach(net => {
                 const opt = document.createElement('option');
-                opt.value = net.ssid;
-                opt.innerText = `${net.ssid} (${net.rssi} dBm ${net.enc ? '🔒' : '🔓'})`;
+                opt.value = net.hidden ? '' : net.ssid;
+                const label = net.hidden
+                    ? `🔒 Hidden (${net.rssi} dBm, ch ${net.channel}, ${net.bssid})`
+                    : `${net.ssid} (${net.rssi} dBm ${net.enc ? '🔒' : '🔓'}, ch ${net.channel})`;
+                opt.innerText = label;
+                if (net.hidden) opt.disabled = true;
                 select.appendChild(opt);
-                const o2 = document.createElement('option');
-                o2.value = net.ssid;
-                dl.appendChild(o2);
+
+                if (!net.hidden) {
+                    const o2 = document.createElement('option');
+                    o2.value = net.ssid;
+                    dl.appendChild(o2);
+                }
             });
             btn.innerText = 'Scan Networks';
             btn.disabled = false;
+            $('diag-result').innerText = networks.length + ' Wi-Fi network(s) detected, including hidden entries where the SDK exposes them.';
         })
         .catch(e => {
             btn.innerText = 'Scan Networks';
             btn.disabled = false;
+            $('diag-result').innerText = 'Wi-Fi scan failed.';
         });
 }
 
@@ -483,6 +656,12 @@ function setChk(id, v) {
     if (e) e.checked = !!v;
 }
 
+function toggleWanStatic(i) {
+    const mode = $('sta_mode' + i);
+    const box = $('sta_static_box' + i);
+    if (box) box.style.display = (mode && mode.value === '1') ? 'block' : 'none';
+}
+
 function loadConfig(filterOnly) {
     return fetch('/config')
         .then(r => r.json())
@@ -498,6 +677,12 @@ function loadConfig(filterOnly) {
                 pe.value = '';
                 pe.dataset.dirty = '';
                 pe.placeholder = c['sta_has_pass' + i] ? 'Saved (leave blank to keep)' : 'Wi-Fi password (empty = open)';
+                setVal('sta_mode' + i, c['sta_static' + i] ? '1' : '0');
+                setVal('sta_ip' + i, c['sta_ip' + i] || '');
+                setVal('sta_gateway' + i, c['sta_gateway' + i] || '');
+                setVal('sta_subnet' + i, c['sta_subnet' + i] || '255.255.255.0');
+                setVal('sta_dns' + i, c['sta_dns' + i] || '');
+                toggleWanStatic(i);
             }
             setChk('mac_enable', c.mac_on);
             setVal('custom_mac', c.mac_on ? c.mac : '');
@@ -537,6 +722,11 @@ function saveConfig(e) {
         p.set('sta_ssid' + i, ssid);
         p.set('sta_pass' + i, pe.value);
         p.set('keep' + i, (!pe.dataset.dirty && ssid === (cfg['sta_ssid' + i] || '')) ? '1' : '0');
+        p.set('sta_static' + i, $('sta_mode' + i).value);
+        p.set('sta_ip' + i, $('sta_ip' + i).value.trim());
+        p.set('sta_gateway' + i, $('sta_gateway' + i).value.trim());
+        p.set('sta_subnet' + i, $('sta_subnet' + i).value.trim());
+        p.set('sta_dns' + i, $('sta_dns' + i).value.trim());
     }
     p.set('mac_on', $('mac_enable').checked ? '1' : '0');
     p.set('custom_mac', $('custom_mac').value.trim());
@@ -604,8 +794,10 @@ loadConfig()
     .catch(() => scanNetworks());
 updateStatus();
 updateClients();
+loadDiagnostics();
 setInterval(updateStatus, 3000);
 setInterval(updateClients, 5000);
+setInterval(loadDiagnostics, 10000);
 </script>
 </body>
 </html>

@@ -56,6 +56,103 @@ static uint32_t rxRate = 0, txRate = 0;    // bytes per second
 static uint64_t rxTotal = 0, txTotal = 0;  // bytes since boot
 static unsigned long lastStatTick = 0;
 
+// Best-effort DHCP hostname discovery for connected AP clients.
+struct ClientNameEntry {
+    uint8_t mac[6];
+    char name[33];
+    unsigned long seen;
+    bool valid;
+};
+static ClientNameEntry clientNames[8] = {};
+static volatile bool dhcpCapturePending = false;
+static volatile uint16_t dhcpCaptureLen = 0;
+static uint8_t dhcpCapture[640];
+
+static void rememberClientName(const uint8_t *mac, const char *name) {
+    if (!name || !name[0]) return;
+    int freeSlot = -1, oldest = 0;
+    for (int i = 0; i < 8; i++) {
+        if (clientNames[i].valid && memcmp(clientNames[i].mac, mac, 6) == 0) {
+            strncpy(clientNames[i].name, name, sizeof(clientNames[i].name)-1);
+            clientNames[i].name[sizeof(clientNames[i].name)-1] = 0;
+            clientNames[i].seen = millis();
+            return;
+        }
+        if (!clientNames[i].valid && freeSlot < 0) freeSlot = i;
+        if (clientNames[i].valid && clientNames[i].seen < clientNames[oldest].seen) oldest = i;
+    }
+    int slot = (freeSlot >= 0) ? freeSlot : oldest;
+    memcpy(clientNames[slot].mac, mac, 6);
+    strncpy(clientNames[slot].name, name, sizeof(clientNames[slot].name)-1);
+    clientNames[slot].name[sizeof(clientNames[slot].name)-1] = 0;
+    clientNames[slot].seen = millis();
+    clientNames[slot].valid = true;
+}
+
+static const char *clientNameFor(const uint8_t *mac) {
+    for (int i = 0; i < 8; i++) if (clientNames[i].valid && memcmp(clientNames[i].mac, mac, 6) == 0) return clientNames[i].name;
+    return nullptr;
+}
+
+static void processCapturedDhcp() {
+    if (!dhcpCapturePending) return;
+    // Work on a private copy so the input hook can never overwrite the buffer mid-parse.
+    static uint8_t work[sizeof(dhcpCapture)];
+    noInterrupts();
+    uint16_t len = dhcpCaptureLen;
+    if (len > sizeof(work)) len = sizeof(work);
+    memcpy(work, dhcpCapture, len);
+    dhcpCapturePending = false;
+    interrupts();
+
+    uint8_t *p = work;
+    // The netif input hook may see a raw IPv4 packet or a full Ethernet frame. Detect which.
+    if (len >= 14 + 20 && p[12] == 0x08 && p[13] == 0x00 && (p[14] >> 4) == 4) {
+        p += 14;
+        len -= 14;
+    }
+    if (len < 20) return;
+    uint8_t ihl = (p[0] & 0x0F) * 4;
+    if ((p[0] >> 4) != 4 || ihl < 20 || len < (uint16_t)(ihl + 8 + 240)) return;
+    if (p[9] != 17) return;                                   // UDP only
+    uint16_t sport = ((uint16_t)p[ihl] << 8) | p[ihl + 1];
+    uint16_t dport = ((uint16_t)p[ihl + 2] << 8) | p[ihl + 3];
+    if (sport != 68 || dport != 67) return;
+    uint8_t *dh = p + ihl + 8;
+    if (dh[0] != 1 || dh[1] != 1 || dh[2] != 6) return;       // BOOTREQUEST, Ethernet, 6-byte MAC
+    uint8_t mac[6]; memcpy(mac, dh + 28, 6);
+    size_t end = len - (ihl + 8);                             // bytes available from DHCP header start
+    uint8_t *o = dh + 236;
+    // DHCP magic cookie = 99.130.83.99 (63 82 53 63)
+    static const uint8_t cookie[4] = {0x63, 0x82, 0x53, 0x63};
+    if (end < 240 || memcmp(o, cookie, 4) != 0) return;
+    size_t pos = 4;
+    size_t optEnd = end - 236;                                // option area length incl. cookie
+    while (pos + 1 < optEnd) {
+        uint8_t code = o[pos++];
+        if (code == 0) continue;
+        if (code == 255) break;
+        uint8_t olen = o[pos++];
+        if (pos + olen > optEnd) break;
+        if (code == 12 && olen > 0) {                         // option 12 = Host Name
+            char name[33];
+            size_t n = olen > 32 ? 32 : olen;
+            size_t k = 0;
+            for (size_t i = 0; i < n; i++) {
+                char c = (char)o[pos + i];
+                // Keep only safe hostname characters (client-controlled data!)
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                    c == '-' || c == '_' || c == '.') name[k++] = c;
+                else if (c == ' ') name[k++] = '_';
+            }
+            name[k] = 0;
+            if (k > 0) rememberClientName(mac, name);
+            break;
+        }
+        pos += olen;
+    }
+}
+
 static err_t IRAM_ATTR staInputHook(struct pbuf *p, struct netif *inp) {
     rxBytesWan += p->tot_len;
     return staOrigInput(p, inp);
@@ -63,6 +160,27 @@ static err_t IRAM_ATTR staInputHook(struct pbuf *p, struct netif *inp) {
 
 static err_t IRAM_ATTR apInputHook(struct pbuf *p, struct netif *inp) {
     txBytesWan += p->tot_len;
+    // DHCP hostname snooping: copy a small candidate packet and parse it later in loop().
+    // Frame may be raw IPv4 or Ethernet+IPv4, so peek at both layouts.
+    if (!dhcpCapturePending && p->tot_len >= 244 && p->tot_len <= sizeof(dhcpCapture) && p->len >= 34) {
+        const uint8_t *b = (const uint8_t *)p->payload;
+        uint16_t off = 0;
+        if (b[12] == 0x08 && b[13] == 0x00 && (b[14] >> 4) == 4) off = 14;
+        else if ((b[0] >> 4) != 4) off = 0xFFFF;
+        if (off != 0xFFFF) {
+            const uint8_t *ip = b + off;
+            uint8_t ihl = (ip[0] & 0x0F) * 4;
+            if (ihl >= 20 && ip[9] == 17 && (uint32_t)off + ihl + 4 <= p->len) {
+                uint16_t sp = ((uint16_t)ip[ihl] << 8) | ip[ihl + 1];
+                uint16_t dp = ((uint16_t)ip[ihl + 2] << 8) | ip[ihl + 3];
+                if (sp == 68 && dp == 67) {
+                    pbuf_copy_partial(p, dhcpCapture, p->tot_len, 0);
+                    dhcpCaptureLen = p->tot_len;
+                    dhcpCapturePending = true;
+                }
+            }
+        }
+    }
     return apOrigInput(p, inp);
 }
 
@@ -143,6 +261,15 @@ bool parseIp(const String &in, uint8_t *out) {
     out[2] = (uint8_t)c;
     out[3] = (uint8_t)d;
     return true;
+}
+
+// Valid netmask = contiguous run of 1s followed by 0s (e.g. 255.255.255.0), between /1 and /30
+bool validNetmask(const uint8_t *m) {
+    uint32_t v = ((uint32_t)m[0] << 24) | ((uint32_t)m[1] << 16) | ((uint32_t)m[2] << 8) | m[3];
+    if (v == 0) return false;
+    uint32_t inv = ~v;
+    if (inv < 3) return false;                       // needs room for at least 2 hosts (/30 or larger)
+    return (inv & (inv + 1)) == 0;
 }
 
 String macToStr(const uint8_t *mac) {
@@ -280,20 +407,102 @@ void handleRoot() {
 
 void handleScan() {
     Serial.println(F("[HTTP] Scan requested"));
-    int n = WiFi.scanNetworks();
+    int n = WiFi.scanNetworks(false, true);
     String j = "[";
     bool first = true;
     for (int i = 0; i < n; ++i) {
         String s = WiFi.SSID(i);
-        if (s.length() == 0) continue;
+        // Ask the ESP8266 SDK to include hidden APs and preserve the hidden
+        // flag explicitly. The real SSID of a hidden AP is not available
+        // from a normal scan, so the user must type it manually to connect.
+        bool hidden = WiFi.isHidden(i) || s.length() == 0;
+        if (hidden) s = "<Hidden network>";
         if (!first) j += ",";
         first = false;
+        String bssid = WiFi.BSSIDstr(i);
+        int ch = WiFi.channel(i);
         j += "{\"ssid\":\"" + jsonEscape(s) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + ",\"enc\":";
         j += ((WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "false" : "true");
-        j += "}";
+        j += ",\"hidden\":" + String(hidden ? "true" : "false");
+        j += ",\"channel\":" + String(ch);
+        j += ",\"bssid\":\"" + jsonEscape(bssid) + "\"}";
     }
     j += "]";
     WiFi.scanDelete();
+    server.send(200, "application/json", j);
+}
+
+void handleReconnect() {
+    if (isSetupMode) { bad("Configure the repeater first"); return; }
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFi.disconnect();
+    }
+    naptActive = false;
+    wasConnected = false;
+    disconnectedSince = millis();
+    lastReconnectAttempt = 0;
+    WiFi.reconnect();
+    server.send(200, "text/plain", "Reconnect started");
+}
+
+void handleTrafficReset() {
+    rxBytesWan = txBytesWan = 0;
+    lastRx = lastTx = 0;
+    rxRate = txRate = 0;
+    rxTotal = txTotal = 0;
+    lastStatTick = millis();
+    server.send(200, "text/plain", "Traffic counters reset");
+}
+
+void handleInternetTest() {
+    if (isSetupMode || WiFi.status() != WL_CONNECTED) {
+        bad("Upstream Wi-Fi is not connected");
+        return;
+    }
+
+    // This is a lightweight TCP reachability test, not an ICMP ping.
+    WiFiClient client;
+    client.setTimeout(1500);
+    unsigned long started = millis();
+    bool ok = client.connect(IPAddress(1, 1, 1, 1), 80);
+    unsigned long elapsed = millis() - started;
+    client.stop();
+
+    String j = "{";
+    jBool(j, "ok", ok);
+    jNum(j, "latency_ms", ok ? (long)elapsed : -1);
+    jStr(j, "target", "1.1.1.1:80/TCP");
+    jEnd(j);
+    server.send(200, "application/json", j);
+}
+
+void handleDiagnostics() {
+    bool up = WiFi.status() == WL_CONNECTED;
+    String j = "{";
+    jBool(j, "connected", up);
+    jStr(j, "chip_id", String(ESP.getChipId(), HEX));
+    jNum(j, "cpu_mhz", ESP.getCpuFreqMHz());
+    jNum(j, "flash_size", ESP.getFlashChipSize());
+    jNum(j, "flash_real_size", ESP.getFlashChipRealSize());
+    jNum(j, "flash_mode", (int)ESP.getFlashChipMode());
+    jNum(j, "sketch_size", ESP.getSketchSize());
+    jNum(j, "free_sketch", ESP.getFreeSketchSpace());
+    jNum(j, "free_heap", ESP.getFreeHeap());
+    jStr(j, "core_version", ESP.getCoreVersion());
+    jStr(j, "sdk_version", ESP.getSdkVersion());
+    jStr(j, "reset_reason", ESP.getResetReason());
+    jBool(j, "wan_static", currentConfig.sta[activeUp].static_ip);
+    jStr(j, "wan_ip", up ? WiFi.localIP().toString() : "0.0.0.0");
+    jStr(j, "gateway", up ? WiFi.gatewayIP().toString() : "0.0.0.0");
+    jStr(j, "subnet", up ? WiFi.subnetMask().toString() : "0.0.0.0");
+    jStr(j, "dns1", up ? WiFi.dnsIP(0).toString() : "0.0.0.0");
+    jStr(j, "dns2", up ? WiFi.dnsIP(1).toString() : "0.0.0.0");
+    jNum(j, "active_upstream", activeUp + 1);
+    jNum(j, "configured_upstreams", countUpstreams());
+    jNum(j, "ap_clients", WiFi.softAPgetStationNum());
+    jNum(j, "ap_channel", WiFi.channel());
+    jStr(j, "ap_ip", WiFi.softAPIP().toString());
+    jEnd(j);
     server.send(200, "application/json", j);
 }
 
@@ -302,15 +511,20 @@ void handleStatus() {
     int rssi = up ? WiFi.RSSI() : 0;
     int sig = (rssi <= -100) ? 0 : (rssi >= -50 ? 100 : 2 * (rssi + 100));
     IPAddress apIp = WiFi.softAPIP();
-    // Both networks in the same subnet would break routing
-    uint32_t m = WiFi.subnetMask().v4() & 0x00FFFFFFUL;
-    bool conflict = up && ((WiFi.localIP().v4() & m) == (apIp.v4() & m));
+    // Both networks in the same subnet would break routing (use the real WAN mask,
+    // static WAN configs may be /16, /23, etc.; the repeater LAN itself is always /24)
+    uint32_t wanMask = WiFi.subnetMask().v4();
+    uint32_t lanMask = IPAddress(255, 255, 255, 0).v4();
+    uint32_t wanIp = WiFi.localIP().v4();
+    bool conflict = up && (((wanIp & wanMask) == (apIp.v4() & wanMask)) ||
+                           ((wanIp & lanMask) == (apIp.v4() & lanMask)));
 
     String j = "{";
     jBool(j, "setup_mode", isSetupMode);
     jBool(j, "sta_connected", up);
     jStr(j, "sta_ssid", up ? WiFi.SSID() : String(currentConfig.sta[activeUp].ssid));
     jNum(j, "sta_slot", activeUp);
+    jBool(j, "wan_static", currentConfig.sta[activeUp].static_ip);
     jStr(j, "sta_ip", up ? WiFi.localIP().toString() : String("0.0.0.0"));
     jStr(j, "sta_mac", WiFi.macAddress());
     jStr(j, "ap_mac", WiFi.softAPmacAddress());
@@ -339,8 +553,19 @@ void handleConfig() {
         char k1[16], k2[20];
         snprintf(k1, sizeof(k1), "sta_ssid%d", i);
         snprintf(k2, sizeof(k2), "sta_has_pass%d", i);
+        char k3[18], k4[18], k5[20], k6[18], k7[18], k8[18];
+        snprintf(k3, sizeof(k3), "sta_static%d", i);
+        snprintf(k4, sizeof(k4), "sta_ip%d", i);
+        snprintf(k5, sizeof(k5), "sta_gateway%d", i);
+        snprintf(k6, sizeof(k6), "sta_subnet%d", i);
+        snprintf(k7, sizeof(k7), "sta_dns%d", i);
         jStr(j, k1, String(currentConfig.sta[i].ssid));
         jBool(j, k2, currentConfig.sta[i].pass[0] != 0);
+        jBool(j, k3, currentConfig.sta[i].static_ip);
+        jStr(j, k4, IPAddress(currentConfig.sta[i].ip).toString());
+        jStr(j, k5, IPAddress(currentConfig.sta[i].gateway).toString());
+        jStr(j, k6, IPAddress(currentConfig.sta[i].subnet).toString());
+        jStr(j, k7, IPAddress(currentConfig.sta[i].dns1).toString());
     }
     jBool(j, "mac_on", currentConfig.use_custom_mac);
     jStr(j, "mac", macToStr(currentConfig.custom_mac));
@@ -380,7 +605,10 @@ void handleClients() {
         if (!first) json += ",";
         first = false;
         IPAddress ip(stat_info->ip.addr);
-        json += "{\"mac\":\"" + macToStr(stat_info->bssid) + "\",\"ip\":\"" + ip.toString() + "\"}";
+        const char *hn = clientNameFor(stat_info->bssid);
+        String fallback = "Device-" + macToStr(stat_info->bssid).substring(9);
+        String nm = hn ? String(hn) : fallback;
+        json += "{\"mac\":\"" + macToStr(stat_info->bssid) + "\",\"ip\":\"" + ip.toString() + "\",\"name\":\"" + jsonEscape(nm) + "\",\"name_source\":\"" + String(hn ? "DHCP" : "fallback") + "\"}";
         stat_info = STAILQ_NEXT(stat_info, next);
     }
     wifi_softap_free_station_info();
@@ -428,6 +656,35 @@ void handleSave() {
             n.sta[i].pass[0] = 0;
         } else if (server.arg(kK) == "1" && strcmp(n.sta[i].ssid, currentConfig.sta[i].ssid) == 0) {
             strcpy(n.sta[i].pass, currentConfig.sta[i].pass);   // keep the saved password
+        }
+        char kMode[18], kIp[18], kGw[22], kMask[20], kDns[20];
+        snprintf(kMode, sizeof(kMode), "sta_static%d", i);
+        snprintf(kIp, sizeof(kIp), "sta_ip%d", i);
+        snprintf(kGw, sizeof(kGw), "sta_gateway%d", i);
+        snprintf(kMask, sizeof(kMask), "sta_subnet%d", i);
+        snprintf(kDns, sizeof(kDns), "sta_dns%d", i);
+        n.sta[i].static_ip = (n.sta[i].ssid[0] != 0) && (server.arg(kMode) == "1");
+        if (n.sta[i].static_ip) {
+            String dnsArg = server.arg(kDns);
+            dnsArg.trim();
+            if (!parseIp(server.arg(kIp), n.sta[i].ip) || !parseIp(server.arg(kGw), n.sta[i].gateway) ||
+                !parseIp(server.arg(kMask), n.sta[i].subnet)) {
+                bad("Invalid static IP settings. Enter a valid IP address, gateway and subnet mask"); return;
+            }
+            if (dnsArg.length() == 0) {
+                memcpy(n.sta[i].dns1, n.sta[i].gateway, 4);          // DNS left blank: use the gateway
+            } else if (!parseIp(dnsArg, n.sta[i].dns1)) {
+                bad("Invalid static DNS server address"); return;
+            }
+            if (n.sta[i].ip[0] == 0 || n.sta[i].ip[0] == 127 || n.sta[i].ip[0] > 223 ||
+                n.sta[i].gateway[0] == 0 || n.sta[i].gateway[0] == 127 || n.sta[i].gateway[0] > 223) {
+                bad("Static IP and gateway must be valid unicast addresses"); return;
+            }
+            if (!validNetmask(n.sta[i].subnet)) { bad("Invalid subnet mask (example: 255.255.255.0)"); return; }
+            if (memcmp(n.sta[i].ip, n.sta[i].gateway, 4) == 0) { bad("Static IP and gateway must be different"); return; }
+        } else {
+            memset(n.sta[i].ip, 0, 4); memset(n.sta[i].gateway, 0, 4); memset(n.sta[i].dns1, 0, 4);
+            n.sta[i].subnet[0]=255; n.sta[i].subnet[1]=255; n.sta[i].subnet[2]=255; n.sta[i].subnet[3]=0;
         }
     }
     if (n.sta[0].ssid[0] == 0) { bad("Primary source network is required"); return; }
@@ -481,6 +738,15 @@ void handleSave() {
     if (n.ap_ip[3] >= ds && n.ap_ip[3] <= de) { bad("The repeater IP must be outside the DHCP range"); return; }
     n.dhcp_start = (uint8_t)ds;
     n.dhcp_end = (uint8_t)de;
+    for (int i = 0; i < MAX_UPSTREAMS; i++) {
+        if (!n.sta[i].static_ip) continue;
+        uint32_t ip = IPAddress(n.sta[i].ip).v4();
+        uint32_t gw = IPAddress(n.sta[i].gateway).v4();
+        uint32_t mask = IPAddress(n.sta[i].subnet).v4();
+        uint32_t ap = IPAddress(n.ap_ip).v4();
+        if ((ip & mask) != (gw & mask)) { bad("Static gateway must be in the same subnet as the static IP"); return; }
+        if ((ip & mask) == (ap & mask)) { bad("Static WAN IP must be on a different subnet from the repeater LAN IP"); return; }
+    }
     String dnsStr = server.arg("dns");
     dnsStr.trim();
     if (dnsStr.length() > 0) {
@@ -579,6 +845,19 @@ void startAp(int channel) {
     WiFi.softAP(currentConfig.ap_ssid, psk, channel, currentConfig.ap_hidden ? 1 : 0, currentConfig.ap_max_clients);
 }
 
+void configureWanIp(uint8_t slot) {
+    const UpstreamNet &u = currentConfig.sta[slot];
+    if (!u.static_ip) {
+        WiFi.config(IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0));
+        Serial.printf("[WAN] Upstream #%d using DHCP\n", slot + 1);
+        return;
+    }
+    IPAddress ip(u.ip), gw(u.gateway), mask(u.subnet), dns(u.dns1);
+    bool ok = WiFi.config(ip, gw, mask, dns, IPAddress(0,0,0,0));
+    Serial.printf("[WAN] Upstream #%d static IP %s / %s gw %s dns %s (%s)\n", slot + 1,
+                  ip.toString().c_str(), mask.toString().c_str(), gw.toString().c_str(), dns.toString().c_str(), ok ? "OK" : "FAILED");
+}
+
 void checkResetButton(unsigned long now) {
     if (digitalRead(RESET_BUTTON_PIN) == LOW) {
         if (btnDownSince == 0) {
@@ -603,7 +882,7 @@ void setup() {
 
     Serial.println();
     Serial.println(F("========================================"));
-    Serial.println(F(" ESP8266 Low-Latency Turbo Repeater     "));
+    Serial.println(F(" ESP8266 Low-Latency Turbo Repeater v1.2.1     "));
     Serial.println(F("========================================"));
 
     ConfigStorage::begin();
@@ -637,6 +916,7 @@ void setup() {
         startAp(lockedChannel);
 
         WiFi.setAutoReconnect(true);
+        configureWanIp(activeUp);
         WiFi.begin(currentConfig.sta[0].ssid, currentConfig.sta[0].pass);
     } else {
         Serial.println(F("[BOOT] Mode Setup: SSID 'ESP8266-Repeater-Setup'"));
@@ -655,6 +935,10 @@ void setup() {
     server.on("/status", HTTP_GET, handleStatus);
     server.on("/config", HTTP_GET, handleConfig);
     server.on("/clients", HTTP_GET, handleClients);
+    server.on("/reconnect", HTTP_POST, handleReconnect);
+    server.on("/traffic/reset", HTTP_POST, handleTrafficReset);
+    server.on("/internet-test", HTTP_GET, handleInternetTest);
+    server.on("/diagnostics", HTTP_GET, handleDiagnostics);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/block", HTTP_POST, handleBlock);
     server.on("/reset", HTTP_POST, handleReset);
@@ -684,6 +968,7 @@ void setup() {
 
 void loop() {
     server.handleClient();
+    processCapturedDhcp();
 
     if (isSetupMode) {
         dnsServer.processNextRequest();
@@ -748,6 +1033,7 @@ void loop() {
                 // Primary (or current) network unreachable for a while: try the next one
                 activeUp = nextUpstream(activeUp);
                 Serial.printf("[FAILOVER] Trying upstream #%d '%s'\n", activeUp + 1, currentConfig.sta[activeUp].ssid);
+                configureWanIp(activeUp);
                 WiFi.begin(currentConfig.sta[activeUp].ssid, currentConfig.sta[activeUp].pass);
                 disconnectedSince = now;
                 lastReconnectAttempt = now;
