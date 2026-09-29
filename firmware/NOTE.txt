@@ -1,11 +1,19 @@
-This firmware has just been customized for your build (MAC clone, client
-list, EN language, reconnect stability), so no prebuilt .bin is shipped
-here to avoid confusion with an out-of-date binary.
+ESP8266 Wi-Fi Repeater v1.2.1
 
-Build it yourself in one step:
-    ./flash.sh /dev/ttyUSB0      (Linux/macOS)
-    flash.bat COM3               (Windows)
+This source package targets a 4 MB ESP8266 flash layout and contains the
+updated mobile web UI, hidden-network scan support, diagnostics, WAN
+reconnect, internet reachability test, and traffic-counter reset.
 
-These scripts now run `pio run` to compile, then flash the result
-straight from .pio/build/esp12e/firmware.bin — that's where the .bin
-will appear if you ever want to grab it directly instead of flashing.
+No prebuilt .bin is included in this source ZIP. Build with PlatformIO:
+    pio run
+
+The resulting firmware is:
+    .pio/build/esp12e/firmware.bin
+
+For a 4 MB target, the supplied flash scripts use:
+    --flash_size 4MB
+
+After flashing, connect to:
+    ESP8266-Repeater-Setup
+and open:
+    http://192.168.4.1
