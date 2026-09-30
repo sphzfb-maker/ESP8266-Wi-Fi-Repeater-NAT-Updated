@@ -28,3 +28,12 @@
 - Static WAN validation: contiguous netmask check, gateway != IP, unicast checks, DNS optional (defaults to the gateway), and unused upstream slots can no longer block saving.
 - Legacy config migration now uses bounded string copies.
 - Version strings unified (firmware banner, web UI title, README, NOTE.txt).
+
+## v1.2.2 - traffic counters + client names (found on real hardware)
+- Fixed live speed / total traffic always showing 0: on the ESP8266 core the Wi-Fi driver delivers frames straight to lwIP's ethernet_input(), so the old `netif->input` hook never ran. Traffic is now counted on the output side (`netif->linkoutput`) of the AP and WAN interfaces. Frames the repeater generates for its own web UI are not counted as download.
+- Fixed client names always showing "MAC label" (same root cause). Hostnames are now read from the DHCP server's UDP port-67 receive callback, so no raw-packet hooks are needed. A device shows its name after its next DHCP request (reconnect the device once).
+- Fixed the WAN DNS field showing "(IP unset)"; empty addresses are now shown as 0.0.0.0 everywhere in the UI.
+- Fixed the page becoming wider than the phone screen (cut-off buttons, badges and Save row): grid/flex children can now shrink and horizontal overflow is clipped.
+- WAN IP mode (DHCP/Static) is shown on its own line under the IP address.
+- NAPT table reduced to 512 entries (`-D NAPT=512` in platformio.ini) which frees roughly 10-12 KB RAM. Free RAM was only 13 KB.
+- Diagnostics: added largest free heap block and hook counters (DHCP / AP out / WAN out) so hook problems are visible without a serial cable.

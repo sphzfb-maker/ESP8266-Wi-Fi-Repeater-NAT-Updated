@@ -1,4 +1,4 @@
-# 🚀 ESP8266 Turbo Wi-Fi Repeater & NAT Router — v1.2.1
+# 🚀 ESP8266 Turbo Wi-Fi Repeater & NAT Router — v1.2.2
 ### *High-Throughput (5 Mbps) & Ultra-Low Latency 160MHz Wi-Fi Range Extender with Modern Web UI*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
