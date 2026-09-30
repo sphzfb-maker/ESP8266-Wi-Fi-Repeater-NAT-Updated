@@ -1,4 +1,4 @@
-ESP8266 Wi-Fi Repeater v1.2.1
+ESP8266 Wi-Fi Repeater v1.2.2
 
 This source package targets a 4 MB ESP8266 flash layout and contains the
 updated mobile web UI, hidden-network scan support, diagnostics, WAN
