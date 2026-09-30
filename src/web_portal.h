@@ -7,7 +7,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP8266 Wi-Fi Turbo Repeater v1.2.1</title>
+    <title>ESP8266 Wi-Fi Turbo Repeater v1.2.2</title>
     <style>
         :root {
             --bg: #0b1120;
@@ -23,27 +23,28 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             --danger: #ef4444;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        html, body { max-width: 100%; overflow-x: hidden; }
         body { background-color: var(--bg); color: var(--text); padding: 16px; display: flex; justify-content: center; min-height: 100vh; }
-        .container { width: 100%; max-width: 500px; }
+        .container { width: 100%; min-width: 0; max-width: 500px; }
         .header { text-align: center; margin-bottom: 20px; }
         .header h1 { font-size: 1.4rem; font-weight: 700; color: #fff; margin-bottom: 4px; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .header p { color: var(--text-dim); font-size: 0.825rem; }
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 14px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }
+        .card { min-width: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 14px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }
         .card-title { font-size: 1rem; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
         .badge { font-size: 0.725rem; padding: 3px 8px; border-radius: 9999px; font-weight: 600; }
         .badge-success { background: rgba(16,185,129,0.2); color: var(--success); }
         .badge-warning { background: rgba(245,158,11,0.2); color: var(--warning); }
-        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         .stat-item { background: var(--card-sub); padding: 10px; border-radius: 8px; border: 1px solid var(--border); }
         .stat-label { font-size: 0.7rem; color: var(--text-dim); margin-bottom: 3px; }
         .stat-val { font-size: 0.9rem; font-weight: 600; word-break: break-all; }
-        .stat-sub { font-size: 0.7rem; color: var(--text-dim); font-weight: 400; }
+        .stat-sub { display: block; font-size: 0.7rem; color: var(--text-dim); font-weight: 400; }
         .form-group { margin-bottom: 14px; }
         label { display: block; font-size: 0.825rem; font-weight: 500; margin-bottom: 5px; color: var(--text); }
         .check-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
         .check-label input[type=checkbox] { width: auto; }
         .input-wrapper { position: relative; display: flex; align-items: center; }
-        select, input, textarea { width: 100%; padding: 10px 12px; border-radius: 8px; background: var(--card-sub); border: 1px solid var(--border); color: #fff; font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
+        select, input, textarea { width: 100%; min-width: 0; max-width: 100%; padding: 10px 12px; border-radius: 8px; background: var(--card-sub); border: 1px solid var(--border); color: #fff; font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
         textarea { min-height: 84px; resize: vertical; font-family: monospace; }
         input[type=range] { padding: 0; height: 28px; }
         select:focus, input:focus, textarea:focus { border-color: var(--primary); }
@@ -51,7 +52,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .eye-btn { position: absolute; right: 10px; background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 4px; display: flex; align-items: center; }
         .eye-btn:hover { color: #fff; }
         .hint { font-size: 0.725rem; color: var(--text-dim); margin-top: 3px; }
-        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         details { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; background: var(--card-sub); }
         summary { cursor: pointer; padding: 12px; font-weight: 600; font-size: 0.9rem; }
         .dbody { padding: 0 12px 4px; }
@@ -74,7 +75,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .alert-warn { background: rgba(245,158,11,0.15); border: 1px solid var(--warning); color: #fcd34d; }
         .client-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; background: var(--card-sub); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; font-size: 0.8rem; }
         .client-row:last-child { margin-bottom: 0; }
-        .client-info { display: flex; flex-direction: column; }
+        .client-info { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
         .client-mac { font-weight: 600; }
         .client-ip { color: var(--text-dim); }
         .client-name { font-weight: 700; margin-bottom: 2px; }
@@ -82,14 +83,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .wan-ip-box { margin-top: 10px; padding: 10px; border: 1px dashed var(--border); border-radius: 8px; }
         .wan-ip-box .sub-title { margin-top: 0; }
         .empty-hint { color: var(--text-dim); font-size: 0.8rem; text-align: center; padding: 10px 0; }
-        .diag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .diag-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
         .diag-item { padding: 8px 10px; background: var(--card-sub); border: 1px solid var(--border); border-radius: 8px; }
         .diag-label { display: block; color: var(--text-dim); font-size: 0.68rem; margin-bottom: 2px; }
         .diag-val { font-family: monospace; font-size: 0.76rem; word-break: break-all; }
-        .tool-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+        .tool-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
         .tool-btn { padding: 9px 6px; background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: 8px; font-size: 0.75rem; cursor: pointer; }
         .tool-btn:hover { background: rgba(255,255,255,0.05); }
         @media (max-width: 420px) { .tool-row { grid-template-columns: 1fr; } }
+        .tool-btn { min-width: 0; overflow-wrap: anywhere; }
     </style>
 </head>
 <body>
@@ -184,6 +186,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <div class="diag-item"><span class="diag-label">CPU / core</span><span id="diag-core" class="diag-val">---</span></div>
             <div class="diag-item"><span class="diag-label">Reset reason</span><span id="diag-reset" class="diag-val">---</span></div>
             <div class="diag-item"><span class="diag-label">Upstream slot</span><span id="diag-upstream" class="diag-val">---</span></div>
+            <div class="diag-item"><span class="diag-label">Hooks: DHCP / AP out / WAN out</span><span id="diag-hooks" class="diag-val">---</span></div>
         </div>
         <div class="tool-row">
             <button type="button" class="tool-btn" onclick="reconnectNow()">Reconnect WAN</button>
@@ -463,7 +466,12 @@ function updateStatus() {
             let name = data.sta_ssid || 'Not configured';
             if (data.sta_connected && data.sta_slot > 0) name += ' (backup ' + data.sta_slot + ')';
             $('stat-sta-ssid').innerText = name;
-            $('stat-sta-ip').innerText = (data.sta_ip || '0.0.0.0') + (data.wan_static ? ' (Static)' : ' (DHCP)');
+            const ipEl = $('stat-sta-ip');
+            ipEl.innerText = data.sta_ip || '0.0.0.0';
+            const ipMode = document.createElement('span');
+            ipMode.className = 'stat-sub';
+            ipMode.innerText = data.wan_static ? 'Static IP' : 'DHCP';
+            ipEl.appendChild(ipMode);
             $('stat-rssi').innerText = data.sta_connected ? `${data.rssi} dBm (${data.signal_pct}%)` : 'Disconnected';
             $('stat-channel').innerText = data.channel || '---';
             $('stat-mac').innerText = data.sta_mac || '---';
@@ -525,13 +533,14 @@ function loadDiagnostics() {
         .then(r => r.json())
         .then(d => {
             setDiag('diag-gateway', d.gateway || '---');
-            setDiag('diag-dns', [d.dns1, d.dns2].filter(x => x && x !== '0.0.0.0').join(' / ') || '---');
-            setDiag('diag-heap', fmtSize(Math.round((d.free_heap || 0) / 1024)));
+            setDiag('diag-dns', [d.dns1, d.dns2].filter(x => x && x !== '0.0.0.0' && x.indexOf('unset') < 0).join(' / ') || '---');
+            setDiag('diag-heap', fmtSize(Math.round((d.free_heap || 0) / 1024)) + ' (block ' + fmtSize(Math.round((d.max_block || 0) / 1024)) + ')');
             setDiag('diag-sketch', fmtSize(Math.round((d.free_sketch || 0) / 1024)));
             setDiag('diag-flash', fmtSize(Math.round((d.flash_size || 0) / 1024)) + ' / real ' + fmtSize(Math.round((d.flash_real_size || 0) / 1024)));
             setDiag('diag-core', (d.cpu_mhz || '?') + ' MHz / ' + (d.core_version || '?'));
             setDiag('diag-reset', d.reset_reason || '---');
             setDiag('diag-upstream', (d.active_upstream || '?') + ' / ' + (d.configured_upstreams || '?'));
+            setDiag('diag-hooks', (d.hook_dhcp || 0) + ' / ' + (d.hook_ap_out || 0) + ' / ' + (d.hook_sta_out || 0));
         })
         .catch(() => {});
 }
